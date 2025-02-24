@@ -23,10 +23,34 @@ struct JSONObject {
     , JSONList        // [42, "hello"]
     , JSONDict        // {"hello": 985, "world": 211}
     > inner;
-    // friend std::ostream& operator<<(std::ostream& os, const JSONObject& obj);
+    friend std::ostream& operator<<(std::ostream& os, const JSONObject& obj);
 };
+std::string escape_string(const std::string& s) {
+    std::string result = "\"";
+    for (char c : s) {
+        switch (c) {
+            case '\"': result += "\\\""; break;
+            case '\\': result += "\\\\"; break;
+            case '\b': result += "\\b"; break;
+            case '\f': result += "\\f"; break;
+            case '\n': result += "\\n"; break;
+            case '\r': result += "\\r"; break;
+            case '\t': result += "\\t"; break;
+            default:
+                if (static_cast<unsigned char>(c) < 0x20) { // 控制字符
+                    char buffer[7];
+                    snprintf(buffer, sizeof(buffer), "\\u%04x", c);
+                    result += buffer;
+                } else {
+                    result += c;
+                }
+        }
+    }
+    result += "\"";
+    return result;
+}
 
-/*std::ostream& operator<<(std::ostream& os, const JSONObject& obj) {
+std::ostream& operator<<(std::ostream& os, const JSONObject& obj) {
     std::visit([&os](auto&& arg) {
         using T = std::decay_t<decltype(arg)>;
         if constexpr (std::is_same_v<T, std::nullptr_t>) {
@@ -44,7 +68,7 @@ struct JSONObject {
         else if constexpr (std::is_same_v<T, std::string>) {
             os << escape_string(arg);
         }
-        else if constexpr (std::is_same_v<T, JSONList>) {
+        else if constexpr (std::is_same_v<T, JSONList>) { // 为什么能看到struct内部声明的variant的类型
             os << "[";
             for (size_t i = 0; i < arg.size(); ++i) {
                 os << arg[i];
@@ -66,7 +90,8 @@ struct JSONObject {
         }
     }, obj.inner);
     return os;
-}*/
+}
+
 namespace num_machine {
     enum status {
         Blank    = 0,
@@ -82,7 +107,7 @@ namespace num_machine {
     };
     enum num_type {
         INT,
-        FLOAT,
+        DOUBLE,
         NAN
     };
 }
@@ -135,7 +160,6 @@ num_machine::num_type get_num_type(std::string_view str) {
     };
     int idx = 0;
     int status = statusTable[0][get_status(str.at(idx))];
-    std::cout << status << std::endl;
     bool hasDot = false;  // Track if we encountered a dot
     bool hasE = false;    // Track if we encountered 'e' or 'E'
 
@@ -152,7 +176,6 @@ num_machine::num_type get_num_type(std::string_view str) {
         if (idx < str.size()) {
             status = statusTable[status][get_status(str.at(idx))];
         }
-        std::cout << status << std::endl;
     }
     if (idx == str.size()) {
         status = statusTable[status][6];
@@ -161,7 +184,7 @@ num_machine::num_type get_num_type(std::string_view str) {
         // If we encountered a dot or 'e', it's likely a floating point number (double)
         if (hasDot || hasE) {
             std::cout << "The number is a double.\n";
-            return FLOAT;
+            return DOUBLE;
         } else {
             std::cout << "The number is an int.\n";
             return INT;
@@ -171,35 +194,17 @@ num_machine::num_type get_num_type(std::string_view str) {
     return NAN;
 }
 
-/*template <typename T>
+template <typename T>
 std::optional<T> try_parse_num(std::string_view str) {
-    return ;
-}*/
-
-std::string escape_string(const std::string& s) {
-    std::string result = "\"";
-    for (char c : s) {
-        switch (c) {
-            case '\"': result += "\\\""; break;
-            case '\\': result += "\\\\"; break;
-            case '\b': result += "\\b"; break;
-            case '\f': result += "\\f"; break;
-            case '\n': result += "\\n"; break;
-            case '\r': result += "\\r"; break;
-            case '\t': result += "\\t"; break;
-            default:
-                if (static_cast<unsigned char>(c) < 0x20) { // 控制字符
-                    char buffer[7];
-                    snprintf(buffer, sizeof(buffer), "\\u%04x", c);
-                    result += buffer;
-                } else {
-                    result += c;
-                }
-        }
+    T value;
+    auto res = std::from_chars(str.data(), str.data() + str.size(), value);
+    if(res.ec == std::errc() && res.ptr == str.data() + str.size()) {
+        return value;
     }
-    result += "\"";
-    return result;
+    return std::nullopt;
 }
+
+
 
 char16_t hex_to_char16(std::string_view hex) {
     unsigned int code = 0;
@@ -227,7 +232,6 @@ std::string utf16_to_utf8(char16_t code) {
 }
 
 JSONObject try_parse_string(const std::string_view json, size_t index) {
-    std::cout << json[index] << std::endl;
     size_t i = index;
     std::cout << "Full JSON string: " << json << std::endl;
     std::string result;
@@ -281,16 +285,66 @@ JSONObject try_parse_string(const std::string_view json, size_t index) {
 }
 
 
-JSONObject parse(std::string_view json) {
+std::pair<JSONObject, size_t> parse(std::string_view json) {
     using namespace num_machine;
     for(int i = 0; i < json.size(); ++i) {
-        if((json[0] <= 9 && json[0] >= 0) || json[0] == '+' || json[0] == '-') {
-            auto res = get_num_type(json);
-            if(res == INT) {
+        if((json[0] <= '9' && json[0] >= '0') || json[0] == '+' || json[0] == '-') {
+            auto type = get_num_type(json);
+            if(type == INT) {
+                if(auto res = try_parse_num<int>(json); res) {
+                    return {JSONObject(res.value()), json.size()};
+                }
+            }
+            else if(type == DOUBLE) {
+                if(auto res = try_parse_num<double>(json); res.has_value()) {
+                    return {JSONObject(res.value()), json.size()};
+                }
+            }
         }
-
-    }
+        else if(json[0] == '"') {
+            return {try_parse_string(json, i + 1),json.size()};
+        }
+        else if(json[0] == '[') {
+            int colon_conunter = 0; //[213,123]
+            std::vector<JSONObject> res;
+            size_t prev_seperate_pos = 0;
+            size_t idx = 1;
+            size_t start_pos = idx;
+            for(; idx < json.size();) {
+                if(json[idx] == ']') {
+                    idx += 1;
+                    break;
+                }
+                size_t separate_pos = json.find(',', idx);
+                if(separate_pos == std::string::npos) {
+                    separate_pos = json.find(']', idx);
+                }
+                if (json[idx] == '[') {
+                    auto [obj, eaten] = parse(json.substr(idx, separate_pos - idx)); // 递归解析
+                    if (eaten == 0) {
+                        idx = 0;
+                        break;
+                    }
+                    res.push_back(std::move(obj));
+                    idx += eaten + 1;
+                }
+                start_pos = idx;
+                auto [obj, eaten] = parse(json.substr(start_pos, separate_pos - start_pos));
+                if (eaten == 0) {
+                    idx = 0;
+                    break;
+                }
+                res.push_back(std::move(obj));
+                idx = idx + eaten + 1;
+                start_pos = idx;
+            }
+            return {JSONObject{std::move(res)}, idx};
+            }
+        }
+    std:: cout << " null " <<std::endl;
+    return {JSONObject(std::monostate()), 0};
 }
+
 int main() {
     /*JSONDict dict;
     dict["hello"] = JSONObject{985};
@@ -305,10 +359,37 @@ int main() {
     /*
      * test num
      */
-    using namespace num_machine;
-    std::string test = "31415abcda";
-    std::cout << test << std::endl;
-    auto res = get_num_type(test);
-    std::cout << res << std::endl;
+    // using namespace num_machine;
+    // std::string test = "0";
+    // auto res = get_num_type(test);
+    // std::cout << res << std::endl;
+    /*
+     * test vector
+     */
+    std::string test = "[[123],[456]]";
+    // std::string test = "[123,456]";
+    auto [testobj, index] = parse(test);
+    std::cout << "test : " << std::endl;
+    std::cout << testobj << std::endl;
+    std::cout << "index : " << index << std::endl;
+    /*
+     * test string
+     */
+    // std::string test = R"JSON("hello\nasas")JSON";
+    // std::string test = R"("testdesu")";
+    // std::string_view test = R"("testdesu\ntest")";
+    // std::cout << test << std::endl;
+    // // auto res = get_num_type(test);
+    // // std::cout << res << std::endl;
+    // auto testobj = parse(test);
+    // std::cout << "test : " << std::endl;
+    // std::cout << test[0] << std::endl;
+    // std::cout << testobj << std::endl;
 
+    /*JSONDict dict;
+    dict["hello"] = JSONObject{985};
+    dict["world"] = JSONObject{211};
+    JSONObject obj1;
+    obj1.inner = dict;
+    std:: cout << obj1 << std::endl;*/
 }
