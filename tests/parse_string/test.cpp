@@ -320,6 +320,7 @@ std::pair<JSONObject, size_t> parse(std::string_view json) {
                     separate_pos = json.find(']', idx);
                 }
                 if (json[idx] == '[') {
+                    separate_pos = json.find(']', idx);
                     auto [obj, eaten] = parse(json.substr(idx, separate_pos - idx)); // 递归解析
                     if (eaten == 0) {
                         idx = 0;
@@ -340,6 +341,9 @@ std::pair<JSONObject, size_t> parse(std::string_view json) {
             }
             return {JSONObject{std::move(res)}, idx};
             }
+        else if (json[0] == '{') {
+
+        }
         }
     std:: cout << " null " <<std::endl;
     return {JSONObject(std::monostate()), 0};
@@ -366,7 +370,8 @@ int main() {
     /*
      * test vector
      */
-    std::string test = "[[123],[456]]";
+    std::string test = "[[123,123],[456,456]]";
+    // std::string test = "[[123],[456]]";
     // std::string test = "[123,456]";
     auto [testobj, index] = parse(test);
     std::cout << "test : " << std::endl;
